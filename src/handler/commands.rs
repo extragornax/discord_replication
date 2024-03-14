@@ -187,8 +187,8 @@ async fn link(ctx: &Context, msg: &Message) -> CommandResult {
 }
 
 
-pub(crate) async fn create_framework() -> StandardFramework {
-    StandardFramework::new()
+pub(crate) async fn create_framework(owners: HashSet<UserId>, bot_id: UserId) -> StandardFramework {
+    let framework = StandardFramework::new()
         // Set a function to be called prior to each command execution. This provides the context
         // of the command, the message that was received, and the full name of the command that
         // will be called.
@@ -231,5 +231,19 @@ pub(crate) async fn create_framework() -> StandardFramework {
         // #name is turned all uppercase
         .help(&MY_HELP)
         .group(&COMMANDS_GROUP)
-        .group(&OWNER_GROUP)
+        .group(&OWNER_GROUP);
+
+    framework.configure(
+        Configuration::new().with_whitespace(true)
+            .on_mention(Some(bot_id))
+            .prefix("!")
+            // In this case, if "," would be first, a message would never be delimited at ", ",
+            // forcing you to trim your arguments if you want to avoid whitespaces at the start of
+            // each.
+            .delimiters(vec![", ", ","])
+            // Sets the bot's owners. These will be used for commands that are owners only.
+            .owners(owners),
+    );
+
+    framework
 }
