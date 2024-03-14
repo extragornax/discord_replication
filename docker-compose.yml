@@ -1,0 +1,24 @@
+version: "3"
+
+services:
+  ###
+  ### PostgreSQL
+  ###
+  postgres:
+    image: postgres:14
+    environment:
+      - POSTGRES_DB=replication
+      - POSTGRES_USER=replication
+      - POSTGRES_PASSWORD=replication
+    volumes:
+      - replication-db-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - replication
+
+networks:
+  replication:
+
+volumes:
+  replication-db-data:
