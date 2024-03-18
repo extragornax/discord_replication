@@ -20,22 +20,6 @@ pub fn get_pg_pool_sized(db_url: &str, size: u32) -> PgPool {
         .build(manager)
         .expect(&format!("Error connecting to {}", &db_url))
 }
-//
-// pub fn with_db_access_manager(
-//     pool: PgPool,
-// ) -> impl Filter<Extract=(DBAccessManager, ), Error=warp::Rejection> + Clone {
-//     warp::any()
-//         .map(move || pool.clone())
-//         .and_then(|pool: PgPool| async move {
-//             match pool.get() {
-//                 Ok(conn) => Ok(DBAccessManager::new(conn)),
-//                 Err(err) => Err(reject::custom(AppError::new(
-//                     format!("Error getting connection from pool: {}", err.to_string()).as_str(),
-//                     ErrorType::Internal,
-//                 ))),
-//             }
-//         })
-// }
 
 type PooledPg = PooledConnection<ConnectionManager<PgConnection>>;
 

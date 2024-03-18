@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use serenity::framework::standard::buckets::{LimitedFor, RevertBucket};
 use std::sync::Arc;
 use serenity::framework::standard::macros::{check, command, group, help, hook};
-use serenity::all::{CacheHttp, ChannelId, ChannelType, Context, EventHandler, GuildChannel, Message, MessageId, Reaction, Ready, UserId};
+use serenity::all::{Context, Message, UserId};
 use serenity::framework::standard::{
     help_commands,
     Args,
@@ -14,7 +14,6 @@ use serenity::framework::standard::{
     CommandOptions,
     CommandResult,
     Configuration,
-    DispatchError,
     HelpOptions,
     Reason,
     StandardFramework,
@@ -22,7 +21,11 @@ use serenity::framework::standard::{
 use serenity::model::permissions::Permissions;
 use serenity::gateway::ShardManager;
 use serenity::prelude::TypeMapKey;
+use crate::{DbHandler, handle_database_init};
+use crate::database::DBAccessManager;
+use crate::handler::db_access::ReplicationPairData;
 use crate::handler::hooks::{after, before, unknown_command};
+use crate::log::write_info_log;
 
 struct ShardManagerContainer;
 
@@ -180,8 +183,53 @@ async fn about(ctx: &Context, msg: &Message) -> CommandResult {
 }
 
 #[command]
-async fn link(ctx: &Context, msg: &Message) -> CommandResult {
-    msg.channel_id.say(&ctx.http, "").await?;
+async fn link(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
+    let all_args = args.rest();
+    let args: Vec<&str> = all_args.split(" ").collect();
+    if args.len() == 4 {
+        let from_guild = args[0].parse::<i64>();
+        let from_channel = args[1].parse::<i64>();
+        let to_guild = args[2].parse::<i64>();
+        let to_channel = args[3].parse::<i64>();
+
+        let data = ctx.data.read().await;
+
+        let db_access_pool = match data.get::<DbHandler>() {
+            Some(v) => {
+                msg.reply(ctx, "Db access manager OK").await?;
+                v
+            }
+            None => {
+                msg.reply(ctx, "There was a problem getting the db access manager").await?;
+
+                return Ok(());
+            }
+        };
+
+        let _db_access: DBAccessManager = db_access_pool.mut_as_db_access();
+
+        let to_insert = ReplicationPairData {
+            from_guild: from_guild.clone().unwrap(),
+            from_channel: from_channel.clone().unwrap(),
+            to_guild: to_guild.clone().unwrap(),
+            to_channel: to_channel.clone().unwrap(),
+        };
+        match _db_access.create_replication_pair(to_insert) {
+            Ok(created) => {
+                msg.reply(ctx, "Replication pair created").await?;
+                write_info_log(format!("Replication pair created {:?}", created));
+            }
+            Err(e) => {
+                msg.reply(ctx, &format!("Error creating replication pair: {:?}", e)).await?;
+            }
+        }
+
+        drop(data);
+
+        msg.channel_id.say(&ctx.http, &format!("from_guild: {}, from_channel: {}, to_guild: {}, to_channel: {}", from_guild.unwrap(), from_channel.unwrap(), to_guild.unwrap(), to_channel.unwrap())).await?;
+    } else {
+        msg.channel_id.say(&ctx.http, "Invalid arguments from_guild_id from_channel_id to_guild_id to_channel_id").await?;
+    }
 
     Ok(())
 }
@@ -242,7 +290,8 @@ pub(crate) async fn create_framework(owners: HashSet<UserId>, bot_id: UserId) ->
             // each.
             .delimiters(vec![", ", ","])
             // Sets the bot's owners. These will be used for commands that are owners only.
-            .owners(owners),
+            .owners(owners)
+        ,
     );
 
     framework

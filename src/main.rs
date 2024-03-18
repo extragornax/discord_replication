@@ -8,19 +8,29 @@ mod handler;
 mod log;
 mod database;
 mod errors;
+mod schema;
 
-use serenity::http::Http;
-use std::collections::{HashMap, HashSet};
-use std::env;
-use std::sync::Arc;
-use serenity::all::{StandardFramework, User, UserId};
-use serenity::prelude::*;
-use crate::database::{get_pg_pool, PgPool};
-use crate::handler::commands::create_framework;
-use crate::handler::Handler;
-use crate::handler::hooks::CommandCounter;
-use crate::log::write_error_log;
-use serenity::gateway::ShardManager;
+use serenity::{
+    http::Http,
+    all::{StandardFramework, UserId},
+    prelude::*,
+    gateway::ShardManager,
+};
+use std::{
+    collections::{HashMap, HashSet},
+    env,
+    sync::Arc,
+};
+use crate::{
+    database::{get_pg_pool, PgPool},
+    handler::{
+        commands::create_framework,
+        Handler,
+        hooks::CommandCounter,
+    },
+    log::{write_error_log, write_info_log},
+};
+use crate::database::DBAccessManager;
 
 struct ShardManagerContainer;
 
@@ -28,14 +38,36 @@ impl TypeMapKey for ShardManagerContainer {
     type Value = Arc<ShardManager>;
 }
 
-fn handle_database_init() -> PgPool {
+pub struct DbHandler {
+    pub pool: PgPool,
+}
+
+impl serenity::prelude::TypeMapKey for DbHandler {
+    type Value = Arc<DbHandler>;
+}
+
+impl DbHandler {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    fn mut_as_db_access(&self) -> DBAccessManager {
+        match self.pool.get() {
+            Ok(conn) => DBAccessManager::new(conn),
+            Err(err) => panic!("Error getting connection from pool: {}", err.to_string()),
+        }
+    }
+}
+
+fn handle_database_init() -> DbHandler {
     dotenv::dotenv().ok();
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL env not set");
 
     let db_pool: PgPool = get_pg_pool(database_url.as_str());
 
-    db_pool
+    DbHandler::new(db_pool)
 }
+
 
 #[tokio::main]
 async fn main() {
@@ -44,14 +76,6 @@ async fn main() {
 
     // Configure the client with your Discord bot token in the environment.
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
-    // Set gateway intents, which decides what events the bot will be notified about
-    // let intents = GatewayIntents::GUILD_MESSAGES
-    //     // | GatewayIntents::DIRECT_MESSAGES
-    //     | GatewayIntents::MESSAGE_CONTENT
-    //     | GatewayIntents::GUILD_MEMBERS
-    //     | GatewayIntents::GUILD_PRESENCES
-    //     | GatewayIntents::GUILD_MESSAGE_REACTIONS
-    //     | GatewayIntents::GUILDS;
 
     let intents = GatewayIntents::all();
 
@@ -75,18 +99,11 @@ async fn main() {
 
     let framework: StandardFramework = create_framework(owners, bot_id).await;
 
-    // Create a new instance of the Client, logging in as a bot. This will automatically prepend
-    // your bot token with "Bot ", which is a requirement by Discord for bot users.
-    // let mut client =
-    //     Client::builder(&token, intents)
-    //         .event_handler(Handler::new(handle_database_init()))
-    //         .framework(framework)
-    //         .type_map_insert::<CommandCounter>(HashMap::default())
-    //         .await.expect("Err creating client");
+    let db_handler = Arc::new(handle_database_init());
 
     let intents = GatewayIntents::all();
     let mut client = Client::builder(&token, intents)
-        .event_handler(Handler::new(handle_database_init()))
+        .event_handler(Handler::new(db_handler.clone()))
         .framework(framework)
         .type_map_insert::<CommandCounter>(HashMap::default())
         .await
@@ -94,8 +111,31 @@ async fn main() {
 
     {
         let mut data = client.data.write().await;
-        data.insert::<ShardManagerContainer>(Arc::clone(&client.shard_manager));
+        let shard_manager = client.shard_manager.clone();
+
+        write_info_log(format!("Inserting ShardManager into data map -> {:?}", shard_manager));
+        data.insert::<ShardManagerContainer>(shard_manager);
+        data.insert::<DbHandler>(db_handler.clone());
     }
+
+    // Here we clone a lock to the Shard Manager, and then move it into a new thread. The thread
+    // will unlock the manager and print shards' status on a loop.
+    // let manager = client.shard_manager.clone();
+
+    // tokio::spawn(async move {
+    //     loop {
+    //         sleep(Duration::from_secs(30)).await;
+    //
+    //         let shard_runners = manager.runners.lock().await;
+    //
+    //         for (id, runner) in shard_runners.iter() {
+    //             println!(
+    //                 "Shard ID {} is {} with a latency of {:?}",
+    //                 id, runner.stage, runner.latency,
+    //             );
+    //         }
+    //     }
+    // });
 
     // Finally, start a single shard, and start listening to events.
     //
