@@ -208,6 +208,8 @@ impl EventHandler for crate::handler::Handler {
                         };
 
                         _db_access.update_replication_reply_status(guild_id, channel_id, true, "active".to_string());
+                        todo!("Add pair channel in other server");
+                        todo!("Save pair to handle it on message");
                     } else if add_reaction.emoji.unicode_eq(format!("{DOWN_EMOJI}").as_str()) {
                         write_info_log("DOWN_EMOJI".to_string());
                         // let _ = add_reaction.channel_id.say(&ctx.http, format!("DOWN_EMOJI -> {}", add_reaction.emoji)).await;
