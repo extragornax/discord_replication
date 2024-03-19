@@ -18,8 +18,12 @@ table! {
         created_at -> Timestamp,
         channel_id -> Int8,
         replication_pairs -> Int8,
+        message_id -> Nullable<Int8>,
+        message_owner -> Int8,
     }
 }
+
+joinable!(replications_reply -> replications_pairs (replication_pairs));
 
 allow_tables_to_appear_in_same_query!(
     replications_pairs,

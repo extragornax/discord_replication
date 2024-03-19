@@ -7,6 +7,7 @@ use chrono::{NaiveDateTime};
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use crate::errors::ErrorType;
+use crate::log::{write_debug_log, write_error_log};
 use crate::schema::{replications_pairs, replications_reply};
 
 #[derive(Queryable, Serialize, Deserialize, Debug)]
@@ -28,7 +29,7 @@ pub struct ReplicationPairData {
     pub to_channel: i64,
 }
 
-#[derive(Queryable, Serialize, Deserialize)]
+#[derive(Queryable, Serialize, Deserialize, Debug)]
 pub struct ReplicationReply {
     pub id: i64,
     pub responded: bool,
@@ -36,15 +37,21 @@ pub struct ReplicationReply {
     pub guild_id: i64,
     pub created_at: NaiveDateTime,
     pub channel_id: i64,
+    pub replication_pairs: i64,
+    pub message_id: Option<i64>,
+    pub message_owner: i64,
 }
 
-#[derive(Insertable, Serialize, Deserialize)]
+#[derive(Insertable, Serialize, Deserialize, Debug)]
 #[table_name = "replications_reply"]
 pub struct ReplicationReplyData {
     pub responded: bool,
     pub status: String,
     pub guild_id: i64,
     pub channel_id: i64,
+    pub replication_pairs: i64,
+    pub message_id: Option<i64>,
+    pub message_owner: i64,
 }
 
 impl DBAccessManager {
@@ -95,6 +102,15 @@ impl DBAccessManager {
             .map_err(|err| AppError::from_diesel_err(err, "while retrieving ReplicationReply"))
     }
 
+    pub fn get_replication_reply_full(&self, _guild_id: i64, _channel_id: i64, _message_id: i64) -> Result<ReplicationReply, AppError> {
+        use crate::schema::replications_reply::dsl::*;
+
+        replications_reply
+            .filter(guild_id.eq(_guild_id).and(channel_id.eq(_channel_id)).and(message_id.eq(_message_id)))
+            .first(&self.connection)
+            .map_err(|err| AppError::from_diesel_err(err, "while retrieving ReplicationReply"))
+    }
+
     pub fn create_replication_reply(&self, dto: ReplicationReplyData) -> Result<ReplicationReply, AppError> {
         diesel::insert_into(replications_reply::table)
             .values(&dto)
@@ -102,13 +118,30 @@ impl DBAccessManager {
             .map_err(|err| AppError::from_diesel_err(err, "while creating ReplicationReply"))
     }
 
-    pub fn update_replication_reply(&self, _guild_id: i64, _channel_id: i64, dto: ReplicationReplyData) -> Result<ReplicationReply, AppError> {
+    pub fn update_replication_reply_status(&self, _guild_id: i64, _channel_id: i64, _responded: bool, _status: String) -> Result<ReplicationReply, AppError> {
         use crate::schema::replications_reply::dsl::*;
 
         let updated = diesel::update(replications_reply.filter(guild_id.eq(_guild_id).and(channel_id.eq(_channel_id))))
             .set((
-                responded.eq(dto.responded),
-                status.eq(dto.status),
+                responded.eq(_responded),
+                status.eq(_status),
+            ))
+            .execute(&self.connection)
+            .map_err(|err| AppError::from_diesel_err(err, "while updating ReplicationReply"))?;
+
+        if updated == 0 {
+            return Err(AppError::new("ReplicationReply not found", ErrorType::NotFound));
+        }
+
+        self.get_replication_reply(_guild_id, _channel_id)
+    }
+
+    pub fn update_replication_reply_message_id(&self, _guild_id: i64, _channel_id: i64, _message_id: Option<i64>) -> Result<ReplicationReply, AppError> {
+        use crate::schema::replications_reply::dsl::*;
+
+        let updated = diesel::update(replications_reply.filter(guild_id.eq(_guild_id).and(channel_id.eq(_channel_id))))
+            .set((
+                message_id.eq(_message_id),
             ))
             .execute(&self.connection)
             .map_err(|err| AppError::from_diesel_err(err, "while updating ReplicationReply"))?;
