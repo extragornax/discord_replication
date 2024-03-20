@@ -1,10 +1,11 @@
 use std::num::NonZeroU64;
 use std::sync::Arc;
-use serenity::all::{GuildId, PartialGuildChannel};
+use serenity::all::{Guild, GuildId, PartialGuildChannel};
 use serenity::all::{CacheHttp, ChannelId, ChannelType, Context, EventHandler, GuildChannel, Message, MessageId, Reaction, Ready};
 use serenity::async_trait;
+use serenity::builder::CreateThread;
 use crate::DbHandler;
-use crate::handler::db_access::ReplicationReplyData;
+use crate::handler::db_access::{ReplicationReplyData, ReplicationThreadPairData};
 use crate::handler::Handler;
 use crate::log::{write_error_log, write_info_log};
 
@@ -78,12 +79,12 @@ impl EventHandler for crate::handler::Handler {
     // Event handlers are dispatched through a threadpool, and so multiple events can be
     // dispatched simultaneously.
     async fn message(&self, ctx: Context, msg: Message) {
-        write_info_log(format!("MESSAGE: {}: {}", msg.author.name, msg.content));
-        write_info_log(format!("New message in {:?} from {}", msg.channel_id, msg.author.name));
-
         if msg.author.bot {
             return;
         }
+
+        write_info_log(format!("MESSAGE: {}: {}", msg.author.name, msg.content));
+        write_info_log(format!("New message in {:?} from {}", msg.channel_id, msg.author.name));
 
         let _db_access = match self.pool.pool.get() {
             Ok(conn) => crate::database::DBAccessManager::new(conn),
@@ -93,9 +94,9 @@ impl EventHandler for crate::handler::Handler {
             }
         };
 
-        match _db_access.get_active_replication_pair(msg.guild_id.unwrap_or_default().get() as i64, msg.channel_id.get() as i64) {
+        match _db_access.get_replication_thread_pairs(msg.guild_id.unwrap_or_default().get() as i64, msg.channel_id.get() as i64) {
             Ok(found) => {
-                msg.channel_id.say(&ctx.http, format!("Replicated message: {:?}", msg.content)).await;
+                let _ = msg.channel_id.say(&ctx.http, format!("Replicated message: {:?}", msg.content)).await;
 
                 for f in found {
                     // ctx.http.create_message(f.to_channel).content(format!("Replicated message: {:?}", msg.content)).await;
@@ -108,31 +109,34 @@ impl EventHandler for crate::handler::Handler {
                             return;
                         }
                     };
-                    let u64_channel = f.to_channel as u64;
-                    let as_nonzerou64_channel = NonZeroU64::new(u64_channel).unwrap();
-                    let chan: ChannelId = as_nonzerou64_channel.into();
+                    let u64_thread = f.to_thread as u64;
+                    let as_nonzerou64_channel = NonZeroU64::new(u64_thread).unwrap();
+                    let threa: ChannelId = as_nonzerou64_channel.into();
 
-                    let channel = match guild.channels.get(&chan) {
+                    let channel = match guild.channels.get(&threa) {
                         Some(channel) => {
+                            let _ = msg.channel_id.say(&ctx.http, format!("Found thread named: {:?} in guild {}", channel.name, channel.guild_id)).await;
                             channel
                         }
                         None => {
-                            write_error_log(format!("Channel not found: {}", f.to_channel));
+                            write_error_log(format!("Thread not found: {}", f.to_thread));
                             return;
                         }
                     };
 
-                    match channel.id.say(&ctx.http, format!("Replicated message: {:?}", msg.content)).await {
-                        Ok(_) => {
-                            write_info_log(format!("Replicated message: {:?}", msg.content));
-                        }
-                        Err(why) => {
-                            write_error_log(format!("Error sending message: {why:?}"));
-                        }
-                    }
+                    // match channel.id.say(&ctx.http, format!("Replicated message: {:?}", msg.content)).await {
+                    //     Ok(_) => {
+                    //         write_info_log(format!("Replicated message: {:?}", msg.content));
+                    //     }
+                    //     Err(why) => {
+                    //         write_error_log(format!("Error sending message: {why:?}"));
+                    //     }
+                    // }
                 }
             }
-            _ => {}
+            _ => {
+                write_info_log("No replication pair found".to_string());
+            }
         }
 
         // match msg.content {
@@ -185,6 +189,7 @@ impl EventHandler for crate::handler::Handler {
         let channel_id = add_reaction.channel_id.get() as i64;
         let message_id = add_reaction.message_id.get() as i64;
         let user_id = add_reaction.user_id.unwrap_or_default().get() as i64;
+        let as_channelid: ChannelId = add_reaction.channel_id;
 
         match _db_access.get_replication_reply_full(guild_id, channel_id, message_id) {
             Ok(data) => {
@@ -207,9 +212,72 @@ impl EventHandler for crate::handler::Handler {
                             }
                         };
 
-                        _db_access.update_replication_reply_status(guild_id, channel_id, true, "active".to_string());
-                        todo!("Add pair channel in other server");
-                        todo!("Save pair to handle it on message");
+                        let _ = _db_access.update_replication_reply_status(guild_id, channel_id, true, "active".to_string());
+
+                        let current_thread_name = add_reaction.channel_id.name(&ctx.http).await.unwrap_or("Replicated thread".to_string());
+
+                        let parent_forum = _db_access.get_parent_forum_from_message_id(guild_id, add_reaction.message_id.into()).unwrap_or_default();
+
+                        let _remote_guilds = match _db_access.get_replication_forum_pair(guild_id, parent_forum) {
+                            Ok(_remote_pairs) => {
+                                add_reaction.channel_id.say(&ctx.http, format!("Remote pairs: {:?}", _remote_pairs)).await;
+
+                                for r in _remote_pairs {
+                                    let guild: Result<Guild, String> = match ctx.cache.guild(r.to_guild as u64) {
+                                        Some(guild) => Ok(guild.clone()),
+                                        _ => {
+                                            write_error_log(format!("Guild not found: {}", r.to_guild));
+
+                                            Err("Guild not found".to_string())
+                                        }
+                                    };
+
+                                    let guild = match guild {
+                                        Ok(guild) => guild,
+                                        Err(err) => {
+                                            write_error_log(format!("Error getting guild: {}", err));
+                                            add_reaction.channel_id.say(&ctx.http, format!("Error getting guild: {}", err)).await;
+                                            return;
+                                        }
+                                    };
+
+                                    let u64_forum = r.to_forum as u64;
+                                    let as_nonzerou64_channel = NonZeroU64::new(u64_forum).unwrap();
+                                    let forum: ChannelId = as_nonzerou64_channel.into();
+
+                                    let remote_channel = guild.channels.get(&forum).unwrap().clone();
+                                    let thread_dup = CreateThread::new(current_thread_name.clone());
+                                    let new_thread = remote_channel.create_thread(&ctx.http, thread_dup).await;
+                                    match new_thread {
+                                        Ok(new_thread_data) => {
+                                            let first = ReplicationThreadPairData {
+                                                from_guild: guild_id,
+                                                from_thread: channel_id,
+                                                to_guild: r.to_guild,
+                                                to_thread: new_thread_data.id.get() as i64,
+                                            };
+                                            let second = ReplicationThreadPairData {
+                                                from_guild: r.to_guild,
+                                                from_thread: new_thread_data.id.get() as i64,
+                                                to_guild: guild_id,
+                                                to_thread: channel_id,
+                                            };
+                                            let _ = _db_access.create_replication_thread_pair(first);
+                                            let _ = _db_access.create_replication_thread_pair(second);
+                                            add_reaction.channel_id.say(&ctx.http, format!("Thread created: {} in guild {}", new_thread_data.name, guild.name)).await;
+                                        }
+                                        Err(e) => {
+                                            write_error_log(format!("Error creating thread: {}", e));
+                                            add_reaction.channel_id.say(&ctx.http, format!("Error creating thread: {}", e)).await;
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        };
+
+                        // todo!("Add pair channel in other server");
+                        // todo!("Save pair to handle it on message");
                     } else if add_reaction.emoji.unicode_eq(format!("{DOWN_EMOJI}").as_str()) {
                         write_info_log("DOWN_EMOJI".to_string());
                         // let _ = add_reaction.channel_id.say(&ctx.http, format!("DOWN_EMOJI -> {}", add_reaction.emoji)).await;
@@ -276,11 +344,11 @@ impl EventHandler for crate::handler::Handler {
         let guild_id = thread.guild_id.get() as i64;
         let parent_id = thread.parent_id.unwrap_or_default().get() as i64;
 
-        let _check_pair = _db_access.get_replication_pair(guild_id, parent_id);
+        let _check_pair = _db_access.get_replication_forum_pair(guild_id, parent_id);
         match _check_pair {
             Ok(data) => {
                 let parsed: Vec<(i64, i64, i64)> = data.iter().map(|i| {
-                    (i.id, i.to_guild, i.to_channel)
+                    (i.id, i.to_guild, i.to_forum)
                 }).collect();
 
                 for (replication_id, to_guild, to_channel) in parsed {

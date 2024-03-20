@@ -4,7 +4,7 @@ CREATE TABLE replications_reply
     responded      BOOLEAN,
     status         VARCHAR(255),
     replication_id BIGINT,
-    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 ALTER TABLE public.replications_reply

@@ -23,7 +23,7 @@ use serenity::gateway::ShardManager;
 use serenity::prelude::TypeMapKey;
 use crate::{DbHandler, handle_database_init};
 use crate::database::DBAccessManager;
-use crate::handler::db_access::ReplicationPairData;
+use crate::handler::db_access::ReplicationForumPairData;
 use crate::handler::hooks::{after, before, unknown_command};
 use crate::log::write_info_log;
 
@@ -188,9 +188,9 @@ async fn link(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
     let args: Vec<&str> = all_args.split(" ").collect();
     if args.len() == 4 {
         let from_guild = args[0].parse::<i64>();
-        let from_channel = args[1].parse::<i64>();
+        let from_forum = args[1].parse::<i64>();
         let to_guild = args[2].parse::<i64>();
-        let to_channel = args[3].parse::<i64>();
+        let to_forum = args[3].parse::<i64>();
 
         let data = ctx.data.read().await;
 
@@ -208,13 +208,13 @@ async fn link(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
 
         let _db_access: DBAccessManager = db_access_pool.mut_as_db_access();
 
-        let to_insert = ReplicationPairData {
+        let to_insert = ReplicationForumPairData {
             from_guild: from_guild.clone().unwrap(),
-            from_channel: from_channel.clone().unwrap(),
+            from_forum: from_forum.clone().unwrap(),
             to_guild: to_guild.clone().unwrap(),
-            to_channel: to_channel.clone().unwrap(),
+            to_forum: to_forum.clone().unwrap(),
         };
-        match _db_access.create_replication_pair(to_insert) {
+        match _db_access.create_replication_forum_pair(to_insert) {
             Ok(created) => {
                 msg.reply(ctx, "Replication pair created").await?;
                 write_info_log(format!("Replication pair created {:?}", created));
@@ -226,7 +226,12 @@ async fn link(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
 
         drop(data);
 
-        msg.channel_id.say(&ctx.http, &format!("from_guild: {}, from_channel: {}, to_guild: {}, to_channel: {}", from_guild.unwrap(), from_channel.unwrap(), to_guild.unwrap(), to_channel.unwrap())).await?;
+        msg.channel_id.say(&ctx.http, &format!("from_guild: {}, from_channel: {}, to_guild: {}, to_channel: {}",
+                                               from_guild.unwrap(),
+                                               from_forum.unwrap(),
+                                               to_guild.unwrap(),
+                                               to_forum.unwrap()
+        )).await?;
     } else {
         msg.channel_id.say(&ctx.http, "Invalid arguments from_guild_id from_channel_id to_guild_id to_channel_id").await?;
     }

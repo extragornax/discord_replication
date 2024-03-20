@@ -1,10 +1,21 @@
 table! {
-    replications_pairs (id) {
+    replication_thread_pairs (id) {
         id -> Int8,
         from_guild -> Int8,
-        from_channel -> Int8,
+        from_thread -> Int8,
         to_guild -> Int8,
-        to_channel -> Int8,
+        to_thread -> Int8,
+        created_at -> Timestamp,
+    }
+}
+
+table! {
+    replications_forum_pairs (id) {
+        id -> Int8,
+        from_guild -> Int8,
+        from_forum -> Int8,
+        to_guild -> Int8,
+        to_forum -> Int8,
         created_at -> Timestamp,
     }
 }
@@ -23,9 +34,10 @@ table! {
     }
 }
 
-joinable!(replications_reply -> replications_pairs (replication_pairs));
+joinable!(replications_reply -> replications_forum_pairs (replication_pairs));
 
 allow_tables_to_appear_in_same_query!(
-    replications_pairs,
+    replication_thread_pairs,
+    replications_forum_pairs,
     replications_reply,
 );
