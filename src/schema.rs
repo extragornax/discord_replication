@@ -6,6 +6,7 @@ table! {
         to_guild -> Int8,
         to_thread -> Int8,
         created_at -> Timestamp,
+        replication_reply_id -> Int8,
     }
 }
 
@@ -34,6 +35,7 @@ table! {
     }
 }
 
+joinable!(replication_thread_pairs -> replications_reply (replication_reply_id));
 joinable!(replications_reply -> replications_forum_pairs (replication_pairs));
 
 allow_tables_to_appear_in_same_query!(

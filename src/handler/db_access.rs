@@ -67,6 +67,7 @@ pub struct ReplicationThreadPair {
     pub to_guild: i64,
     pub to_thread: i64,
     pub created_at: NaiveDateTime,
+    pub replication_reply_id: i64,
 }
 
 #[derive(Insertable, Serialize, Deserialize, Debug)]
@@ -76,6 +77,7 @@ pub struct ReplicationThreadPairData {
     pub from_thread: i64,
     pub to_guild: i64,
     pub to_thread: i64,
+    pub replication_reply_id: i64,
 }
 
 impl DBAccessManager {
@@ -127,6 +129,14 @@ impl DBAccessManager {
             .values(&dto)
             .get_result(&self.connection)
             .map_err(|err| AppError::from_diesel_err(err, "while creating ReplicationReply"))
+    }
+
+    pub fn delete_replication_reply(&self, _id: i64) -> Result<usize, AppError> {
+        use crate::schema::replications_reply::dsl::*;
+
+        diesel::delete(replications_reply.filter(id.eq(_id)))
+            .execute(&self.connection)
+            .map_err(|err| AppError::from_diesel_err(err, "while deleting convertionrate"))
     }
 
     pub fn update_replication_reply_status(&self, _guild_id: i64, _channel_id: i64, _responded: bool, _status: String) -> Result<ReplicationReply, AppError> {

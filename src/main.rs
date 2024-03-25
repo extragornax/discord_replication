@@ -101,7 +101,6 @@ async fn main() {
 
     let db_handler = Arc::new(handle_database_init());
 
-    let intents = GatewayIntents::all();
     let mut client = Client::builder(&token, intents)
         .event_handler(Handler::new(db_handler.clone()))
         .framework(framework)
